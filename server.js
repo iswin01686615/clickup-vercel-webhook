@@ -5,64 +5,70 @@ import qs from "querystring";
 const app = express();
 const PORT = 3000;
 
-// 🔑 API key ClickUp (có thể thay bằng process.env.CLICKUP_API_KEY)
 const CLICKUP_API_KEY =
     process.env.CLICKUP_API_KEY ||
-    "pk_288875890_FLZ0W78Z6POOO7QHBSB96BY243KWTOVM";
+    "pk_288875890_B54GXF7ZBTEWSFCNCECR25G7HM099DGW";
 
-// Middleware đọc toàn bộ payload (ClickUp đôi khi gửi text/plain)
-app.use(express.text({ type: "*/*" }));
+// ⚙️ Cho phép Express đọc nhiều loại body
+app.use(express.text({ type: "*/*" })); // đọc raw text
+app.use(express.json({ limit: "1mb" })); // đọc JSON hợp lệ
+app.use(express.urlencoded({ extended: true })); // đọc form-urlencoded
 
-// Hàm log tiện ích
 const log = (...args) => console.log("[ClickUpWebhook]", ...args);
 
 /**
- * 📩 Hàm xử lý webhook chính
+ * 📩 Webhook chính
  */
 app.post("/api/clickup/webhook", async (req, res) => {
     try {
         log("Webhook received!");
         log("Headers:", req.headers);
 
-        if (!req.body || req.body.trim().length === 0) {
-            log("❌ Error: No post data received");
-            return res
-                .status(400)
-                .json({ success: false, error: "No data received" });
+        // --- 1️⃣ Đảm bảo luôn có raw string body ---
+        let rawBody = "";
+        if (typeof req.body === "string") {
+            rawBody = req.body;
+        } else if (typeof req.body === "object" && Object.keys(req.body).length > 0) {
+            rawBody = JSON.stringify(req.body);
         }
 
-        const raw = req.body;
-        log("Raw Payload:", raw);
+        log("Raw Body:", rawBody);
 
-        // ClickUp đôi khi gửi form-urlencoded
+        if (!rawBody || rawBody.trim().length === 0) {
+            log("❌ Error: No post data received");
+            return res.status(400).json({ success: false, error: "No data" });
+        }
+
+        // --- 2️⃣ Parse body linh hoạt ---
         let data = {};
         try {
-            data = JSON.parse(raw);
+            if (typeof req.body === "object" && Object.keys(req.body).length > 0) {
+                data = req.body;
+            } else {
+                data = JSON.parse(rawBody);
+            }
         } catch (err) {
-            data = qs.parse(raw);
+            data = qs.parse(rawBody); // fallback nếu ClickUp gửi form
         }
 
         log("Parsed data:", data);
 
-        // --- Giữ nguyên logic gốc ---
+        // --- 3️⃣ Lấy thông tin task ---
         let taskId;
         let startDate;
         let estimate;
 
         if (data.task_id) {
-            // Cấu trúc webhook đơn giản
             taskId = data.task_id;
             const taskDetails = await getTaskDetails(taskId);
             startDate = taskDetails.start_date;
             estimate = taskDetails.time_estimate;
         } else if (data.task && data.task.id) {
-            // Webhook có đủ thông tin task
             taskId = data.task.id;
             startDate = data.task.start_date;
             estimate = data.task.time_estimate;
         } else if (data.event && data.event.includes("task")) {
-            // Webhook theo kiểu event
-            taskId = data.task_id || (data.payload && data.payload.task_id);
+            taskId = data.task_id || data?.payload?.task_id;
             const taskDetails = await getTaskDetails(taskId);
             startDate = taskDetails.start_date;
             estimate = taskDetails.time_estimate;
@@ -72,42 +78,35 @@ app.post("/api/clickup/webhook", async (req, res) => {
 
         log("Task ID:", taskId);
         log("Start Date:", startDate);
-        log("Time Estimate:", estimate);
+        log("Estimate:", estimate);
 
-        if (!startDate || !estimate) {
-            throw new Error("Missing start_date or time_estimate");
-        }
+        if (!startDate || !estimate) throw new Error("Missing start_date or estimate");
 
-        const startDateMs = parseInt(startDate);
-        const estimateMs = parseInt(estimate);
+        const startMs = parseInt(startDate);
+        const estMs = parseInt(estimate);
 
-        if (isNaN(startDateMs) || isNaN(estimateMs)) {
-            throw new Error("Invalid date format");
-        }
+        if (isNaN(startMs) || isNaN(estMs)) throw new Error("Invalid date format");
 
-        const dueDate = new Date(startDateMs + estimateMs);
-        log("Computed due date:", dueDate.getTime());
+        const dueDate = new Date(startMs + estMs);
+        log("Computed due date:", dueDate.toISOString());
 
-        const updateSuccess = await updateTaskDueDate(taskId, dueDate.getTime());
+        const success = await updateTaskDueDate(taskId, dueDate.getTime());
+        if (!success) throw new Error("Failed to update due date");
 
-        if (updateSuccess) {
-            log("✅ Successfully updated due date for task:", taskId);
-            return res.status(200).json({
-                success: true,
-                message: "Due date updated successfully",
-                due_date: dueDate.toISOString(),
-            });
-        } else {
-            throw new Error("Failed to update due date");
-        }
-    } catch (error) {
-        log("❌ Error:", error.toString());
-        return res.status(500).json({ success: false, error: error.toString() });
+        log("✅ Successfully updated task:", taskId);
+        return res.status(200).json({
+            success: true,
+            task_id: taskId,
+            due_date: dueDate.toISOString(),
+        });
+    } catch (err) {
+        log("❌ Error:", err.message);
+        return res.status(500).json({ success: false, error: err.message });
     }
 });
 
 /**
- * 📦 Hàm lấy thông tin chi tiết task từ ClickUp API
+ * 📦 Lấy task chi tiết
  */
 async function getTaskDetails(taskId) {
     const url = `https://api.clickup.com/api/v2/task/${taskId}`;
@@ -116,81 +115,44 @@ async function getTaskDetails(taskId) {
         "Content-Type": "application/json",
     };
 
-    const response = await axios.get(url, { headers });
-    log("Get Task Response Code:", response.status);
+    const res = await axios.get(url, { headers });
+    log("Get Task:", res.status);
 
-    if (response.status !== 200) {
-        throw new Error("Failed to fetch task details: " + response.data);
-    }
-
-    return response.data;
+    if (res.status !== 200) throw new Error("Failed to fetch task");
+    return res.data;
 }
 
 /**
- * 🧩 Hàm cập nhật due_date lên ClickUp
+ * 🧩 Cập nhật due date
  */
-async function updateTaskDueDate(taskId, dueDateTimestamp) {
+async function updateTaskDueDate(taskId, dueDate) {
     const url = `https://api.clickup.com/api/v2/task/${taskId}`;
     const headers = {
         Authorization: CLICKUP_API_KEY,
         "Content-Type": "application/json",
     };
 
-    const payload = {
-        due_date: dueDateTimestamp,
-        due_date_time: true,
-    };
+    const body = { due_date: dueDate, due_date_time: true };
+    const res = await axios.put(url, body, { headers });
+    log("Update:", res.status);
 
-    const response = await axios.put(url, payload, { headers });
-    log("Update Response Code:", response.status);
-    log("Update Response:", response.data);
-
-    return response.status === 200;
+    return res.status === 200;
 }
 
 /**
- * 🧪 Hàm test API key
+ * 🔑 Test API Key (GET)
  */
 app.get("/api/clickup/testApiKey", async (req, res) => {
     try {
-        const url = "https://api.clickup.com/api/v2/user";
-        const response = await axios.get(url, {
+        const resp = await axios.get("https://api.clickup.com/api/v2/user", {
             headers: { Authorization: CLICKUP_API_KEY },
         });
-
-        log("🔑 API Key Test Response Code:", response.status);
-        log("🔑 API Key Test Response:", response.data);
-
-        return res.json({
-            status: response.status === 200 ? "✅ OK" : "❌ FAILED",
-            data: response.data,
-        });
+        res.json({ ok: true, user: resp.data });
     } catch (err) {
-        log("❌ API Key test error:", err.message);
-        return res.status(500).json({ error: err.message });
+        res.status(500).json({ ok: false, error: err.message });
     }
 });
 
-/**
- * 🧪 Test thủ công local
- */
-app.get("/api/clickup/testWebhook", async (req, res) => {
-    const taskId = req.query.task_id || "86evfm5bq"; // thay ID thật
-    log("🧪 Testing webhook for:", taskId);
-
-    const task = await getTaskDetails(taskId);
-    const startDate = parseInt(task.start_date);
-    const estimate = parseInt(task.time_estimate);
-
-    const dueDate = startDate + estimate;
-    const updateSuccess = await updateTaskDueDate(taskId, dueDate);
-
-    return res.json({
-        success: updateSuccess,
-        due_date: new Date(dueDate).toISOString(),
-    });
-});
-
-app.listen(PORT, () => {
-    log(`🚀 Server running on http://localhost:${PORT}`);
-});
+app.listen(PORT, () =>
+    log(`🚀 Server running on http://localhost:${PORT}`)
+);
