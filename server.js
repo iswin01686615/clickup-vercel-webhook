@@ -4,7 +4,7 @@ import axios from "axios";
 
 const app = express();
 const PORT = 3000;
-const CLICKUP_API_KEY = process.env.CLICKUP_API_KEY || "pk_288875890_B54GXF7ZBTEWSFCNCECR25G7HM099DGW";
+const CLICKUP_API_KEY = process.env.CLICKUP_API_KEY || "pk_288875890_FLZ0W78Z6POOO7QHBSB96BY243KWTOVM";
 
 app.use(bodyParser.json());
 
