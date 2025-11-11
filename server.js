@@ -5,29 +5,29 @@ import qs from "querystring";
 const app = express();
 const PORT = 3000;
 
-const CLICKUP_API_KEY =
-    process.env.CLICKUP_API_KEY ||
-    "pk_288875890_B54GXF7ZBTEWSFCNCECR25G7HM099DGW";
+// 🔐 Token fix cứng trong mã nguồn
+const CLICKUP_API_KEY = "pk_288875890_TR7AIEA29E6NLA4EENC7OUPO036JBKHQ";
 
-// Hỗ trợ tất cả loại body
+// Middleware: hỗ trợ mọi loại body (ClickUp gửi content-type khác nhau)
 app.use(express.text({ type: "*/*" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 const log = (...args) => console.log("[ClickUpWebhook]", ...args);
 
-// 🧩 Route động: nhận {id} từ URL
+// 🧩 Route nhận Task ID qua URL
 app.post("/api/clickup/webhook/:id", async (req, res) => {
     try {
         const taskIdFromUrl = req.params.id;
         log(`📩 Webhook triggered for Task ID (from URL): ${taskIdFromUrl}`);
 
-        // --- Đọc body ---
+        // --- Đọc raw body ---
         let rawBody = "";
         if (typeof req.body === "string") rawBody = req.body;
         else if (typeof req.body === "object" && Object.keys(req.body).length > 0)
             rawBody = JSON.stringify(req.body);
-        log("Raw Body:", rawBody);
+
+        log("📥 Raw Body:", rawBody);
 
         let data = {};
         try {
@@ -90,7 +90,7 @@ app.post("/api/clickup/webhook/:id", async (req, res) => {
     }
 });
 
-// 🔧 Các hàm phụ trợ
+// --- Lấy thông tin task từ ClickUp ---
 async function getTaskDetails(taskId) {
     const url = `https://api.clickup.com/api/v2/task/${taskId}`;
     const headers = { Authorization: CLICKUP_API_KEY };
@@ -99,12 +99,21 @@ async function getTaskDetails(taskId) {
     return res.data;
 }
 
+// --- Cập nhật due_date ---
 async function updateTaskDueDate(taskId, dueDate) {
     const url = `https://api.clickup.com/api/v2/task/${taskId}`;
-    const headers = { Authorization: CLICKUP_API_KEY, "Content-Type": "application/json" };
-    const payload = { due_date: dueDate, due_date_time: true };
+    const headers = {
+        Authorization: CLICKUP_API_KEY,
+        "Content-Type": "application/json",
+    };
+    const payload = {
+        due_date: dueDate,
+        due_date_time: true,
+    };
     const res = await axios.put(url, payload, { headers });
     return res.status === 200;
 }
 
-app.listen(PORT, () => log(`🚀 Server running on http://localhost:${PORT}`));
+app.listen(PORT, () =>
+    log(`🚀 Server running on http://localhost:${PORT}`)
+);
