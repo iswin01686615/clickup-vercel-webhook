@@ -1,8 +1,14 @@
+import express from "express";
+import bodyParser from "body-parser";
 import axios from "axios";
 
-const CLICKUP_API_KEY = process.env.CLICKUP_API_KEY;
+const app = express();
+const PORT = 3000;
+const CLICKUP_API_KEY = process.env.CLICKUP_API_KEY || "pk_288875890_B54GXF7ZBTEWSFCNCECR25G7HM099DGW";
 
-export default async function handler(req, res) {
+app.use(bodyParser.json());
+
+app.all("/api/clickup/webhook", async (req, res) => {
     // Chấp nhận cả GET và POST
     if (req.method !== "GET" && req.method !== "POST") {
         return res.status(405).json({ error: "Method not allowed" });
@@ -59,4 +65,8 @@ export default async function handler(req, res) {
         console.error("❌ Error:", err.response?.data || err.message);
         return res.status(500).json({ error: err.message });
     }
-}
+});
+
+app.listen(PORT, () => {
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
+});
