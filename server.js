@@ -5,7 +5,7 @@ import axios from "axios";
 const app = express();
 const PORT = 3000;
 const CLICKUP_API_KEY = process.env.CLICKUP_API_KEY || "pk_288875890_FLZ0W78Z6POOO7QHBSB96BY243KWTOVM";
-
+console.log(CLICKUP_API_KEY,"key");
 app.use(bodyParser.json());
 
 app.all("/api/clickup/webhook", async (req, res) => {
