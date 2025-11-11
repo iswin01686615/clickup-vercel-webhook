@@ -1,12 +1,14 @@
 {
   "name": "clickup-vercel-webhook",
   "version": "1.0.0",
-  "description": "ClickUp auto update due_date webhook (Node.js + Vercel)",
+  "description": "ClickUp webhook for updating due_date via Vercel",
   "type": "module",
   "dependencies": {
-    "axios": "^1.7.4"
+    "axios": "^1.7.4",
+    "express": "^4.19.2",
+    "body-parser": "^1.20.2"
   },
   "scripts": {
-    "start": "vercel dev"
+    "dev": "node server.js"
   }
 }
