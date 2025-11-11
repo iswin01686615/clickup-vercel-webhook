@@ -5,14 +5,27 @@ import axios from "axios";
 const app = express();
 const PORT = 3000;
 
-// API key (nên để trong .env)
+// 🔑 Load API key (ưu tiên .env)
 const CLICKUP_API_KEY =
     process.env.CLICKUP_API_KEY ||
     "pk_288875890_FLZ0W78Z6POOO7QHBSB96BY243KWTOVM";
 
 console.log("🔑 ClickUp API Key Loaded:", CLICKUP_API_KEY ? "✅ OK" : "❌ MISSING");
 
+// Dùng bodyParser JSON
 app.use(bodyParser.json());
+
+// Middleware để log toàn bộ request — hỗ trợ debug trên Vercel Logs
+app.use((req, res, next) => {
+    console.log("📥 Incoming Request ----------------------");
+    console.log("🔹 Method:", req.method);
+    console.log("🔹 URL:", req.originalUrl);
+    console.log("🔹 Headers:", JSON.stringify(req.headers, null, 2));
+    console.log("🔹 Query:", JSON.stringify(req.query, null, 2));
+    console.log("🔹 Body:", JSON.stringify(req.body, null, 2));
+    console.log("------------------------------------------");
+    next();
+});
 
 app.all("/api/clickup/webhook", async (req, res) => {
     if (req.method !== "GET" && req.method !== "POST") {
@@ -29,6 +42,7 @@ app.all("/api/clickup/webhook", async (req, res) => {
         const event = req.query.event || req.body?.event;
 
         if (!taskId) {
+            console.log("⚠️ Missing task_id in request");
             return res.status(400).json({ error: "Missing task_id" });
         }
 
@@ -44,7 +58,6 @@ app.all("/api/clickup/webhook", async (req, res) => {
             throw new Error("No teams found for this token");
         }
 
-        // Nếu có nhiều workspace, chọn theo tên hoặc lấy team đầu tiên
         const team =
             teams.find((t) => t.name.includes("Elearning")) || teams[0];
         const teamId = team.id;
@@ -54,9 +67,7 @@ app.all("/api/clickup/webhook", async (req, res) => {
         // --- 3️⃣ Lấy thông tin task ---
         const taskRes = await axios.get(
             `https://api.clickup.com/api/v2/task/${taskId}`,
-            {
-                headers: { Authorization: CLICKUP_API_KEY },
-            }
+            { headers: { Authorization: CLICKUP_API_KEY } }
         );
 
         const task = taskRes.data;
@@ -77,7 +88,7 @@ app.all("/api/clickup/webhook", async (req, res) => {
         const dueISO = new Date(dueDate).toISOString();
         console.log(`🧮 Computed due_date = ${dueISO}`);
 
-        // --- 5️⃣ Cập nhật task (thêm team_id để tránh OAUTH_027) ---
+        // --- 5️⃣ Cập nhật task ---
         const updateRes = await axios.put(
             `https://api.clickup.com/api/v2/task/${taskId}?team_id=${teamId}`,
             { due_date: dueDate, due_date_time: true },
@@ -95,11 +106,19 @@ app.all("/api/clickup/webhook", async (req, res) => {
             due_date: dueISO,
         });
     } catch (err) {
-        const errorData = err.response?.data || err.message;
-        console.error("❌ Error:", errorData);
-        return res.status(500).json({
+        const status = err.response?.status;
+        const data = err.response?.data;
+        const message = err.message;
+
+        console.error("❌ ClickUp API Error:", {
+            status,
+            data,
+            message,
+        });
+
+        return res.status(status || 500).json({
             success: false,
-            error: errorData,
+            error: data || message,
         });
     }
 });
