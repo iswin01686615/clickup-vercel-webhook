@@ -31,6 +31,12 @@ app.all("/api/clickup/webhook", async (req, res) => {
     if (req.method !== "GET" && req.method !== "POST") {
         return res.status(405).json({ error: "Method not allowed" });
     }
+    let body = {};
+    try {
+        body = JSON.parse(req.body);
+    } catch (e) {
+        console.log("⚠️ Body không phải JSON, dùng raw text:", req.body);
+    }
 
     try {
         // --- 1️⃣ Lấy task_id và event ---
