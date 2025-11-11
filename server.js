@@ -4,18 +4,23 @@ import axios from "axios";
 
 const app = express();
 const PORT = 3000;
-const CLICKUP_API_KEY = process.env.CLICKUP_API_KEY || "pk_288875890_FLZ0W78Z6POOO7QHBSB96BY243KWTOVM";
-console.log(CLICKUP_API_KEY,"key");
+
+// API key (nên để trong .env)
+const CLICKUP_API_KEY =
+    process.env.CLICKUP_API_KEY ||
+    "pk_288875890_FLZ0W78Z6POOO7QHBSB96BY243KWTOVM";
+
+console.log("🔑 ClickUp API Key Loaded:", CLICKUP_API_KEY ? "✅ OK" : "❌ MISSING");
+
 app.use(bodyParser.json());
 
 app.all("/api/clickup/webhook", async (req, res) => {
-    // Chấp nhận cả GET và POST
     if (req.method !== "GET" && req.method !== "POST") {
         return res.status(405).json({ error: "Method not allowed" });
     }
 
     try {
-        // --- 1. Lấy task_id và event ---
+        // --- 1️⃣ Lấy task_id và event ---
         const taskId =
             req.query.task_id ||
             req.body?.task_id ||
@@ -29,10 +34,30 @@ app.all("/api/clickup/webhook", async (req, res) => {
 
         console.log(`📩 Webhook received: task_id=${taskId}, event=${event}`);
 
-        // --- 2. Lấy thông tin task từ ClickUp ---
-        const taskRes = await axios.get(`https://api.clickup.com/api/v2/task/${taskId}`, {
+        // --- 2️⃣ Lấy danh sách team_id từ ClickUp ---
+        const teamsRes = await axios.get("https://api.clickup.com/api/v2/team", {
             headers: { Authorization: CLICKUP_API_KEY },
         });
+
+        const teams = teamsRes.data.teams || [];
+        if (teams.length === 0) {
+            throw new Error("No teams found for this token");
+        }
+
+        // Nếu có nhiều workspace, chọn theo tên hoặc lấy team đầu tiên
+        const team =
+            teams.find((t) => t.name.includes("Elearning")) || teams[0];
+        const teamId = team.id;
+
+        console.log(`✅ Using Team ID: ${teamId} (${team.name})`);
+
+        // --- 3️⃣ Lấy thông tin task ---
+        const taskRes = await axios.get(
+            `https://api.clickup.com/api/v2/task/${taskId}`,
+            {
+                headers: { Authorization: CLICKUP_API_KEY },
+            }
+        );
 
         const task = taskRes.data;
         const startDate = parseInt(task.start_date);
@@ -40,30 +65,42 @@ app.all("/api/clickup/webhook", async (req, res) => {
 
         if (!startDate || !estimate) {
             console.log("⚠️ Missing start_date or estimate");
-            return res.status(200).json({ message: "No start_date or estimate" });
+            return res.status(200).json({
+                success: false,
+                message: "No start_date or estimate found",
+                task_id: taskId,
+            });
         }
 
-        // --- 3. Tính toán due_date ---
+        // --- 4️⃣ Tính toán due_date ---
         const dueDate = startDate + estimate;
-        console.log(`🧮 Computed due_date = ${new Date(dueDate).toISOString()}`);
+        const dueISO = new Date(dueDate).toISOString();
+        console.log(`🧮 Computed due_date = ${dueISO}`);
 
-        // --- 4. Cập nhật task ---
-        await axios.put(
-            `https://api.clickup.com/api/v2/task/${taskId}`,
+        // --- 5️⃣ Cập nhật task (thêm team_id để tránh OAUTH_027) ---
+        const updateRes = await axios.put(
+            `https://api.clickup.com/api/v2/task/${taskId}?team_id=${teamId}`,
             { due_date: dueDate, due_date_time: true },
             { headers: { Authorization: CLICKUP_API_KEY } }
         );
 
-        console.log(`✅ Updated task ${taskId}`);
+        console.log(
+            `✅ Updated task ${taskId}, status=${updateRes.status}, due_date=${dueISO}`
+        );
 
         return res.status(200).json({
             success: true,
             task_id: taskId,
-            due_date: new Date(dueDate).toISOString(),
+            team_id: teamId,
+            due_date: dueISO,
         });
     } catch (err) {
-        console.error("❌ Error:", err.response?.data || err.message);
-        return res.status(500).json({ error: err.message });
+        const errorData = err.response?.data || err.message;
+        console.error("❌ Error:", errorData);
+        return res.status(500).json({
+            success: false,
+            error: errorData,
+        });
     }
 });
 
